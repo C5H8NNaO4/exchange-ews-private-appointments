@@ -3,8 +3,7 @@ using Microsoft.Exchange.WebServices.Data;
 using System.IO;
 using NDesk.Options;
 using System.Collections.Generic;
-
-
+using System.Threading.Tasks;
 
 namespace privApt
 {
@@ -24,40 +23,37 @@ namespace privApt
         static String serviceUser = "";
         static String servicePass = "";
 
-        static string[] users = new string[0]; 
+        static string[] users = new string[0]; //"elmar.schoettner@bechtle.com,moritz.roessler@bechtle.com".Split(',');
         static int verbosity = 0;
         static string path = "";
         static string url = "";
         static bool save;
         static bool normal;
         static int tim = 15;
-        static string logfile = System.IO.Path.GetTempPath() + "private_appointments.log";
+        static string logfile = System.IO.Path.GetTempPath() + "privApts.log";
         static StreamWriter w;
         static bool show_help = false;
 
         static void Main(string[] args)
         {
-            File.Delete(logfile);
-            w = File.AppendText(logfile);
-
-            int page = 0;
-            int total = 0;
             int totaltotal = 0;
 
-            FindItemsResults<Item> results;
+
             OptionSet p = initOptions(args);
+            if (File.Exists(logfile)) File.Delete(logfile);
+            w = File.AppendText(logfile);
             logOptions(args);
             initialize(p);
 
-            Log("Autodiscover URL " + service.Url);
-            for (int i = 0; i < users.Length; i++)
-            {
-                String usr = users[i];
 
-                total = 0;
-                page = 0;
+
+            Log("Autodiscover URL " + service.Url);
+            Parallel.ForEach(users, (usr) => {
+                int total = 0;
+                int page = 0;
                 LogStart();
                 LogLine("Processing Calendar: " + usr);
+                FindItemsResults<Item> results;
                 do
                 {
                     results = loadPage(usr, page++);
@@ -69,13 +65,13 @@ namespace privApt
                     LogLine("Page " + page + ": " + results.Items.Count + " appointments.");
                     turnPrivate(results);
                     total += results.Items.Count;
-                        
+
                 } while (Constants.DEBUG_PAGES > page && results != null && results.MoreAvailable);
                 totaltotal += total;
                 LogLine(usr + " - processed " + total + " appointments.");
                 LogEnd();
 
-            }
+            });
             Log("Processed a total of " + totaltotal + " appointments in " + users.Length + " calendars.");
             LogLine("Logfile at: " + logfile);
 
@@ -95,7 +91,7 @@ namespace privApt
             LogLine("verbosity=" + verbosity);
             LogLine("normal=" + normal);
         }
-        static OptionSet initOptions (string[] args)
+        static OptionSet initOptions(string[] args)
         {
             var p = new OptionSet() {
                 { "i|users=", "the {PATH} to the file, containing SMPT addresses.",
@@ -103,6 +99,9 @@ namespace privApt
                 { "l|log=",
                    "the {PATH} to the file used for logging.",
                     (v) => logfile = v },
+                { "c|parallel|page-size=",
+                   "Number of items per page",
+                    (v) => pageSize = int.Parse(v) },
                 { "s+|save",
                    "Save the changes",
                     (v) => save = v != null},
@@ -263,36 +262,37 @@ namespace privApt
         private static void turnPrivate(FindItemsResults<Item> results)
         {
 
-            foreach (Appointment item in results.Items)
-            {
-                if (verbosity > 0)  Console.WriteLine(++processed + " " + item.Subject);
-                item.Sensitivity = normal?Sensitivity.Normal:Sensitivity.Private;
-                try
-                {
-                    if (save)
-                    {
-                        if (verbosity > 0) LogLine("Updating item '" + item.Subject + "'");
-                        item.Update(ConflictResolutionMode.AlwaysOverwrite, SendInvitationsOrCancellationsMode.SendToNone);
-                    }
+            Parallel.ForEach(results.Items, (Item apt) =>
+           {
+               Appointment item = (Appointment)apt;
 
-                    if (verbosity > 2) LogLine("    Id " + verbosity + "a" + item.Id.ToString());
-                    System.Threading.Thread.Sleep(tim);
-                }
-                catch (Exception e)
-                {
-                    Log("Error Updating Item : " + item.Subject);
-                    LogLine("Error Updating Item : " + e.Message);
+               if (verbosity > 0) Console.WriteLine(++processed + " " + item.Subject);
+               item.Sensitivity = normal ? Sensitivity.Normal : Sensitivity.Private;
+               try
+               {
+                   if (save)
+                   {
+                       if (verbosity > 0) LogLine("Updating item '" + item.Subject + "'");
+                       item.Update(ConflictResolutionMode.AlwaysOverwrite, SendInvitationsOrCancellationsMode.SendToNone);
+                   }
 
-                }
+                   if (verbosity > 2) LogLine("    Id " + verbosity + "a" + item.Id.ToString());
+                   System.Threading.Thread.Sleep(tim);
+               }
+               catch (Exception e)
+               {
+                   Log("Error Updating Item : " + item.Subject);
+                   LogLine("Error Updating Item : " + e.Message);
 
-            }
+               }
+           });
 
         }
         private static FindItemsResults<Item> loadPage(string usr, int pageNr)
         {
-            int offset = pageSize * pageNr;
+            int offset = (pageSize * pageNr);
 
-            ItemView view = new ItemView(pageSize + 1, offset);
+            ItemView view = new ItemView(pageSize , offset);
 
             return fetchAppointments(usr, view);
         }
