@@ -17,6 +17,7 @@ namespace privApt
     {
         static int pageSize = 5;
         static int processed = 0;
+
         static ExchangeService service;
 
         static String discoverUser = "";
@@ -33,12 +34,11 @@ namespace privApt
         static string logfile = System.IO.Path.GetTempPath() + "privApts.log";
         static StreamWriter w;
         static bool show_help = false;
-
+        static bool parallelUsers;
+        static bool parallelPages;
+        static int total = 0;
         static void Main(string[] args)
         {
-            int totaltotal = 0;
-
-
             OptionSet p = initOptions(args);
             if (File.Exists(logfile)) File.Delete(logfile);
             w = File.AppendText(logfile);
@@ -48,35 +48,41 @@ namespace privApt
 
 
             Log("Autodiscover URL " + service.Url);
-            Parallel.ForEach(users, (usr) => {
-                int total = 0;
-                int page = 0;
-                LogStart();
-                LogLine("Processing Calendar: " + usr);
-                FindItemsResults<Item> results;
-                do
+            if (parallelUsers) Parallel.ForEach(users, processCalendar);
+            else
+            {
+                for (int i = 0; i < users.Length; i++)
                 {
-                    results = loadPage(usr, page++);
-                    if (results == null)
-                    {
-                        LogLine("No appointments found for user " + usr);
-                        continue;
-                    }
-                    LogLine("Page " + page + ": " + results.Items.Count + " appointments.");
-                    turnPrivate(results);
-                    total += results.Items.Count;
-
-                } while (Constants.DEBUG_PAGES > page && results != null && results.MoreAvailable);
-                totaltotal += total;
-                LogLine(usr + " - processed " + total + " appointments.");
-                LogEnd();
-
-            });
-            Log("Processed a total of " + totaltotal + " appointments in " + users.Length + " calendars.");
+                    processCalendar(users [i]);
+                }
+            }
+            Log("Processed a total of " + Program.total + " appointments in " + users.Length + " calendars.");
             LogLine("Logfile at: " + logfile);
 
             exit();
 
+        }
+ 
+        static void processCalendar (string usr) {
+            int total = 0;
+            int page = 0;
+            LogLine("Processing Calendar: " + usr);
+            FindItemsResults<Item> results;
+            do
+            {
+                results = loadPage(usr, page++);
+                if (results == null)
+                {
+                    LogLine("No appointments found for user " + usr);
+                    continue;
+                }
+                LogLine("Page " + page + "("+usr+"): " + results.Items.Count + " appointments.");
+                turnPrivate(results);
+                total += results.Items.Count;
+
+            } while (Constants.DEBUG_PAGES > page && results != null && results.MoreAvailable);
+            Program.total += total;
+            LogLine(usr + " - processed " + total + " appointments.");
         }
         static void logOptions (string[] args)
         {
@@ -99,9 +105,15 @@ namespace privApt
                 { "l|log=",
                    "the {PATH} to the file used for logging.",
                     (v) => logfile = v },
-                { "c|parallel|page-size=",
+                { "c|page-size=",
                    "Number of items per page",
                     (v) => pageSize = int.Parse(v) },
+                { "X+|parallel-pages",
+                   "Number of items per page",
+                    (v) => parallelPages = v!= null },
+                { "U+|parallel-users",
+                   "Number of items per page",
+                    (v) => parallelUsers = v!= null },
                 { "s+|save",
                    "Save the changes",
                     (v) => save = v != null},
@@ -261,32 +273,44 @@ namespace privApt
         }
         private static void turnPrivate(FindItemsResults<Item> results)
         {
+            if (parallelPages) Parallel.ForEach(results.Items, updateItem);
+            else
+            {
+                for (int i=0; i < results.Items.Count; i++)
+                {
+                    updateItem(results.Items[i]);
+                }
+            }
 
-            Parallel.ForEach(results.Items, (Item apt) =>
-           {
-               Appointment item = (Appointment)apt;
+        }
 
-               if (verbosity > 0) Console.WriteLine(++processed + " " + item.Subject);
-               item.Sensitivity = normal ? Sensitivity.Normal : Sensitivity.Private;
-               try
-               {
-                   if (save)
-                   {
-                       if (verbosity > 0) LogLine("Updating item '" + item.Subject + "'");
-                       item.Update(ConflictResolutionMode.AlwaysOverwrite, SendInvitationsOrCancellationsMode.SendToNone);
-                   }
+        private static void updateItem (Item apt)
+        {
+            Appointment item = (Appointment)apt;
 
-                   if (verbosity > 2) LogLine("    Id " + verbosity + "a" + item.Id.ToString());
-                   System.Threading.Thread.Sleep(tim);
-               }
-               catch (Exception e)
-               {
-                   Log("Error Updating Item : " + item.Subject);
-                   LogLine("Error Updating Item : " + e.Message);
+            if (verbosity > 1)
+            {
+                 Console.WriteLine(++processed + " " + item.Subject);
+            }
+                    
+            item.Sensitivity = normal ? Sensitivity.Normal : Sensitivity.Private;
+            try
+            {
+                if (save)
+                {
+                    if (verbosity > 0) LogLine("Updating " + item.Sensitivity+ " item '" + item.Subject + "'");
+                    item.Update(ConflictResolutionMode.AlwaysOverwrite, SendInvitationsOrCancellationsMode.SendToNone);
+                }
 
-               }
-           });
+                if (verbosity > 2) LogLine("    Id " + item.Id.ToString());
+                System.Threading.Thread.Sleep(tim);
+            }
+            catch (Exception e)
+            {
+                Log("Error Updating Item : " + item.Subject);
+                LogLine("Error Updating Item : " + e.Message);
 
+            }
         }
         private static FindItemsResults<Item> loadPage(string usr, int pageNr)
         {
