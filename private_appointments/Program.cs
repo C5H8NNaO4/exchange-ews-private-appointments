@@ -13,7 +13,22 @@ namespace privApt
         public const int DEBUG_PAGES = 100000;
 
     }
-    class Program
+    class Listener : ITraceListener
+    {
+        TextWriter w;
+
+
+
+        public Listener(StreamWriter w)
+        {
+            this.w = w;
+        }
+        public void Trace(string traceType, string traceMessage)
+        {
+            Program.LogLine(traceMessage, w);
+        }
+    }
+    class Program 
     {
         static int pageSize = 5;
         static int processed = 0;
@@ -23,6 +38,7 @@ namespace privApt
         static String discoverUser = "";
         static String serviceUser = "";
         static String servicePass = "";
+        
 
         static string[] users = new string[0]; //"elmar.schoettner@bechtle.com,moritz.roessler@bechtle.com".Split(',');
         static int verbosity = 0;
@@ -37,11 +53,13 @@ namespace privApt
         static bool parallelUsers;
         static bool parallelPages;
         static int total = 0;
+        static ITraceListener logTrace;
         static void Main(string[] args)
         {
             OptionSet p = initOptions(args);
             if (File.Exists(logfile)) File.Delete(logfile);
             w = File.AppendText(logfile);
+            logTrace = new Listener(File.AppendText(logfile + ".trace"));
             logOptions(args);
             initialize(p);
 
@@ -56,7 +74,7 @@ namespace privApt
                     if (users[i] == "")
                     {
                         LogError("Error while parsing input in line " + i );
-                        LogErrorLine("    -> Expected a valid SMTP address but found ''");
+                        LogErrorLine("Expected a valid SMTP address but found ''", "ErrUnexpextedInput");
                         continue;
                     }
                     processCalendar(users [i]);
@@ -176,8 +194,12 @@ namespace privApt
                 users = File.Exists(path) ? (File.ReadAllLines(path)) : new string[0];
                 service = new ExchangeService(ExchangeVersion.Exchange2013_SP1);
                 service.Credentials = new WebCredentials(serviceUser, servicePass);
-                if (verbosity > 3)
+                if (verbosity > 5)
+                {
                     service.TraceEnabled = true;
+                    service.TraceListener = logTrace;
+                }
+                    
                 service.TraceFlags = TraceFlags.All;
             }
             if (serviceUser == "")
@@ -263,14 +285,32 @@ namespace privApt
         }
         public static void LogErrorLine(string logMessage)
         {
-            if (verbosity > 1) Console.Error.WriteLine(logMessage);
+            Console.Error.WriteLine(logMessage);
             w.WriteLine("  :{0}", logMessage);
+
+        }
+        public static void LogErrorLine(string logMessage, string err)
+        {
+            if (verbosity > 1) Console.Error.WriteLine("  : [{0}] {1}", err.ToString(), logMessage);
+            w.WriteLine("  |    -> [{0}] {1}",err.ToString (), logMessage);
 
         }
         public static void LogLine(string logMessage)
         {
             if (verbosity > 1) Console.WriteLine(logMessage);
             w.WriteLine("  :{0}", logMessage);
+
+        }
+        public static void LogLine(string logMessage, TextWriter w)
+        {
+            if (verbosity > 1) Console.WriteLine(logMessage);
+            w.WriteLine("  :{0}", logMessage);
+
+        }
+        public static void LogExtraLine(string logMessage)
+        {
+            if (verbosity > 1) Console.WriteLine(logMessage);
+            w.WriteLine("       {0}", logMessage);
 
         }
         public static void LogEnd()
@@ -311,7 +351,8 @@ namespace privApt
             if (!(myApt is Appointment))
             {
                 LogError("Error while updating Item (" + myApt.Subject + ")");
-                LogErrorLine("    -> Item is not an appointment");
+                LogErrorLine("Item is not an appointment", "TypeMismatch");
+
                 return;
             }
             Appointment item = (Appointment)apt;
@@ -330,15 +371,23 @@ namespace privApt
                     item.Update(ConflictResolutionMode.AlwaysOverwrite, SendInvitationsOrCancellationsMode.SendToNone);
                 }
 
-                if (verbosity > 2) LogLine("    Id " + item.Id.ToString());
+                
+                if ((verbosity > 1 && verbosity < 4) || verbosity > 5) LogExtraLine((save?"":"(Not) ") + "Updating " + item.Sensitivity + " item '" + item.Subject + "'");
+                if (verbosity > 4) LogExtraLine("     ID " + item.Id.ToString());
                 System.Threading.Thread.Sleep(tim);
+            }
+            catch (ServiceResponseException ex)
+            {
+                LogError("Error while updating Item (" + item.Subject + ")");
+                LogErrorLine(ex.Message, ex.ErrorCode.ToString ());
             }
             catch (Exception e)
             {
                 LogError("Error while updating Item (" + item.Subject + ")");
-                LogErrorLine("    -> " + e.Message);
+                LogErrorLine(e.Message);
 
             }
+            
         }
         private static FindItemsResults<Item> loadPage(string usr, int pageNr)
         {
@@ -370,10 +419,15 @@ namespace privApt
                 return results;
 
             }
+            catch (ServiceResponseException ex)
+            {
+                LogError("Error while fetching appointments for user '" + usr + "'");
+                LogErrorLine(ex.Message, ex.ErrorCode.ToString ());
+            }
             catch (Exception ex)
             {
                 LogError("Error while fetching appointments for user '" + usr + "'");
-                LogErrorLine("    -> " + ex.Message);
+                LogErrorLine(ex.Message);
             }
             return null;
 
@@ -391,6 +445,12 @@ namespace privApt
                 result = true;
             }
             return result;
+        }
+
+        public void Trace(string traceType, string traceMessage)
+        {
+            w.WriteLine(traceMessage);
+            throw new NotImplementedException();
         }
     }
 }
