@@ -53,6 +53,12 @@ namespace privApt
             {
                 for (int i = 0; i < users.Length; i++)
                 {
+                    if (users[i] == "")
+                    {
+                        LogError("Error while parsing input in line " + i );
+                        LogErrorLine("    -> Expected a valid SMTP address but found ''");
+                        continue;
+                    }
                     processCalendar(users [i]);
                 }
             }
@@ -66,14 +72,16 @@ namespace privApt
         static void processCalendar (string usr) {
             int total = 0;
             int page = 0;
-            LogLine("Processing Calendar: " + usr);
+            LogEnd();
+            LogLine("Processing Calendar: '" + usr + "'");
             FindItemsResults<Item> results;
+            usr = usr.Trim();
             do
             {
                 results = loadPage(usr, page++);
                 if (results == null)
                 {
-                    LogLine("No appointments found for user " + usr);
+                    LogLine("No appointments found for user '" + usr + "'");
                     continue;
                 }
                 LogLine("Page " + page + "("+usr+"): " + results.Items.Count + " appointments.");
@@ -82,7 +90,7 @@ namespace privApt
 
             } while (Constants.DEBUG_PAGES > page && results != null && results.MoreAvailable);
             Program.total += total;
-            LogLine(usr + " - processed " + total + " appointments.");
+            LogLine("'" + usr + "' - processed " + total + " appointments.");
         }
         static void logOptions (string[] args)
         {
@@ -96,6 +104,7 @@ namespace privApt
             LogLine("pass=" + "*****");
             LogLine("verbosity=" + verbosity);
             LogLine("normal=" + normal);
+            LogEnd();
         }
         static OptionSet initOptions(string[] args)
         {
@@ -158,7 +167,7 @@ namespace privApt
         {
             if (path == "")
             {
-                LogLine("Error: Missing required option 'users'");
+                LogError("Error: Missing required option 'users'");
                 show_help = true;
             }
 
@@ -173,19 +182,19 @@ namespace privApt
             }
             if (serviceUser == "")
             {
-                LogLine("Error: Missing required option 'user'");
+                LogError("Error: Missing required option 'user'");
                 show_help = true;
             }
             if (servicePass == "")
             {
-                LogLine("Error: Missing required option 'pass'");
+                LogError("Error: Missing required option 'pass'");
                 show_help = true;
             }
             if (url == "")
             {
                 if (discoverUser == "")
                 {
-                    LogLine("Error: Missing required option 'discover'");
+                    LogError("Error: Missing required option 'discover'");
                     w.Flush();
                     show_help = true;
 
@@ -246,6 +255,18 @@ namespace privApt
                 DateTime.Now.ToLongDateString());
             w.WriteLine("  :");
         }
+
+        public static void LogError (string logMessage)
+        {
+            Console.Error.WriteLine(logMessage);
+            w.WriteLine(" X:{0}", logMessage);
+        }
+        public static void LogErrorLine(string logMessage)
+        {
+            if (verbosity > 1) Console.Error.WriteLine(logMessage);
+            w.WriteLine("  :{0}", logMessage);
+
+        }
         public static void LogLine(string logMessage)
         {
             if (verbosity > 1) Console.WriteLine(logMessage);
@@ -260,7 +281,7 @@ namespace privApt
         {
             LogStart();
             w.WriteLine("  :{0}", logMessage);
-            LogEnd();
+            //LogEnd();
         }
 
         public static void DumpLog(StreamReader r)
@@ -286,6 +307,13 @@ namespace privApt
 
         private static void updateItem (Item apt)
         {
+            Item myApt = apt;
+            if (!(myApt is Appointment))
+            {
+                LogError("Error while updating Item (" + myApt.Subject + ")");
+                LogErrorLine("    -> Item is not an appointment");
+                return;
+            }
             Appointment item = (Appointment)apt;
 
             if (verbosity > 1)
@@ -307,8 +335,8 @@ namespace privApt
             }
             catch (Exception e)
             {
-                Log("Error Updating Item : " + item.Subject);
-                LogLine("Error Updating Item : " + e.Message);
+                LogError("Error while updating Item (" + item.Subject + ")");
+                LogErrorLine("    -> " + e.Message);
 
             }
         }
@@ -344,8 +372,8 @@ namespace privApt
             }
             catch (Exception ex)
             {
-                LogLine("Error fetching appointments for user: " + usr);
-                LogLine(ex.Message);
+                LogError("Error while fetching appointments for user '" + usr + "'");
+                LogErrorLine("    -> " + ex.Message);
             }
             return null;
 
