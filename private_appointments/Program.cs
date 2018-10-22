@@ -4,6 +4,7 @@ using System.IO;
 using NDesk.Options;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using System.Collections.ObjectModel;
 
 namespace privApt
 {
@@ -56,44 +57,108 @@ namespace privApt
         static ITraceListener logTrace;
         static void Main(string[] args)
         {
+
             OptionSet p = initOptions(args);
             if (File.Exists(logfile)) File.Delete(logfile);
             w = File.AppendText(logfile);
-            logTrace = new Listener(File.AppendText(logfile + ".trace"));
-            logOptions(args);
-            initialize(p);
 
-
-
-            Log("Autodiscover URL " + service.Url);
-            if (parallelUsers) Parallel.ForEach(users, processCalendar);
-            else
+            try
             {
-                for (int i = 0; i < users.Length; i++)
-                {
-                    if (users[i] == "")
-                    {
-                        LogError("Error while parsing input in line " + i );
-                        LogErrorLine("Expected a valid SMTP address but found ''", "ErrUnexpextedInput");
-                        continue;
-                    }
-                    processCalendar(users [i]);
-                }
-            }
-            Log("Processed a total of " + Program.total + " appointments in " + users.Length + " calendars.");
-            LogLine("Logfile at: " + logfile);
 
-            exit();
+
+                logTrace = new Listener(File.AppendText(logfile + ".trace"));
+                logOptions(args);
+                initialize(p);
+
+
+
+                Log("Autodiscover URL " + service.Url);
+                if (parallelUsers) Parallel.ForEach(users, processCalendar);
+                else
+                {
+                    for (int i = 0; i < users.Length; i++)
+                    {
+                        if (users[i] == "")
+                        {
+                            LogError("Error while parsing input in line " + i);
+                            LogErrorLine("Expected a valid SMTP address but found ''", "ErrUnexpextedInput");
+                            continue;
+                        }
+                        processCalendar(users[i]);
+                    }
+                }
+                Log("Processed a total of " + Program.total + " appointments in " + users.Length + " calendars.");
+                LogLine("Logfile at: " + logfile);
+
+                exit();
+            }
+            catch (Exception e)
+            {
+                LogError("Unexpected Error");
+                LogErrorLine(e.Message, "Error");
+            }
 
         }
- 
+
+        static DelegateUserResponse updateDelegates (string del)
+        {
+            LogLine("Updating delegate permissions for user '" + del + "'");
+
+            Mailbox mailbox = new Mailbox(del);
+            DelegateInformation result = service.GetDelegates(mailbox, true);
+            Collection<DelegateUserResponse> resps = result.DelegateUserResponses;
+            LogLine("Found "+resps.Count+ " delegates for user '" + del + "'");
+            foreach (DelegateUserResponse r in resps)
+            {
+                LogLine(r.Result.ToString ());
+            }
+            
+            // Create a list to hold the updated delegates.
+            List<DelegateUser> updatedDelegates = new System.Collections.Generic.List<DelegateUser>();
+            // Set the new permissions for the delegate.
+            DelegateUser taskDelegate = new DelegateUser(discoverUser);
+            
+            taskDelegate.Permissions.CalendarFolderPermissionLevel = DelegateFolderPermissionLevel.Author;
+            taskDelegate.Permissions.TasksFolderPermissionLevel = DelegateFolderPermissionLevel.Author;
+
+            updatedDelegates.Add(taskDelegate);
+
+            Collection<DelegateUserResponse> response = service.UpdateDelegates(mailbox, MeetingRequestsDeliveryScope.DelegatesAndSendInformationToMe, updatedDelegates);
+            DelegateUserResponse resp = null;
+            foreach (DelegateUserResponse r in response)
+            {
+                resp = r;
+                break;
+            }
+
+            return resp;
+        }
+
         static void processCalendar (string usr) {
+            usr = usr.Trim();
             int total = 0;
             int page = 0;
             LogEnd();
             LogLine("Processing Calendar: '" + usr + "'");
+
+
+            DelegateUserResponse res = updateDelegates(usr);
+            if (res == null)
+            {
+                //LogLine(res.Result.ToString ());
+                //throw new NotImplementedException("Not yet implemented");
+            } else if (res.ErrorCode.ToString() != "")
+            {
+                LogError("Error updating delegate permissions");
+                LogErrorLine(res.ErrorMessage, res.ErrorCode.ToString ());
+            } else
+            {
+                LogLine("Updated delegate permissions");
+                
+                LogExtraLine(res.Result.ToString());
+            }
             FindItemsResults<Item> results;
-            usr = usr.Trim();
+
             do
             {
                 results = loadPage(usr, page++);
